@@ -301,17 +301,6 @@ namespace GoogleSuggestionsParser
                         entry.SearchQuery = q;
 
                         // get application
-                        //var clickTarget = node.SelectSingleNode(@"div/a[@class='card-click-target']");
-                        //var href = clickTarget.GetAttributeValue("href", string.Empty);
-                        //Console.WriteLine(href);
-                        //entry.AppId = href;
-
-                        //var currentNode = node.SelectSingleNode(@"div/a[@class='title']");
-                        //var href = currentNode.GetAttributeValue("href", string.Empty);
-                        //Console.WriteLine(href);
-                        //entry.AppId = href;
-                        //entry.AppName = currentNode.InnerText.Trim();
-
                         var detailsNode = node.SelectSingleNode(@"div/div[@class='details']");
 
                         var hrefNode = detailsNode.SelectSingleNode("a[@class='title']");
@@ -449,7 +438,15 @@ namespace GoogleSuggestionsParser
                 var tmp = Updated.Split(' ');
                 if (tmp.Length < 3)
                     return $"\t\t";
-                return $"{tmp[0]}\t{MonthNumberByName(tmp[1])}\t{tmp[2]}";
+                //return $"{tmp[0]}\t{MonthNumberByName(tmp[1])}\t{tmp[2]}";
+                int day = 0;
+                int month = MonthNumberByName(tmp[1]);
+                int year = 0;
+
+                if (!int.TryParse(tmp[0], out day) || !int.TryParse(tmp[2], out year))
+                    return string.Empty;
+
+                return string.Format("{0:D2}.{1:D2}.{2}", day, month, year);
             }
         }
 
