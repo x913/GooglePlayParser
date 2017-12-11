@@ -20,6 +20,9 @@ namespace GoogleSuggestionsParser
 
             var parser = new FluentCommandLineParser<CommandLineArguments>();
 
+            parser.SetupHelp("?", "help")
+                .Callback(text => Console.WriteLine(text) );
+
             parser.Setup(arg => arg.Query)
                 .As('q', "query")
                 .Required()
@@ -140,7 +143,7 @@ namespace GoogleSuggestionsParser
             }
 
 
-            Console.WriteLine("Unknown work mode");
+            //Console.WriteLine("Unknown work mode");
         }
 
         static void ConvertJsonToCsv(string input, string output)
@@ -285,7 +288,8 @@ namespace GoogleSuggestionsParser
         {
             var doc = new HtmlDocument();
             doc.LoadHtml(response);
-            var nodes = doc.DocumentNode.SelectNodes(@"//div[@class='card no-rationale square-cover apps small']");
+            //var nodes = doc.DocumentNode.SelectNodes(@"//div[@class='card no-rationale square-cover apps small']");
+            var nodes = doc.DocumentNode.SelectNodes(@"//div[contains(@class, 'card no-rationale square-cover apps')]");
             var entries = new List<GooglePlayEntry>();
             if (nodes != null)
             {
@@ -297,28 +301,40 @@ namespace GoogleSuggestionsParser
                         entry.SearchQuery = q;
 
                         // get application
-                        var clickTarget = node.SelectSingleNode(@"div/a[@class='card-click-target']");
-                        var href = clickTarget.GetAttributeValue("href", string.Empty);
-                        Console.WriteLine(href);
-                        entry.AppId = href;
+                        //var clickTarget = node.SelectSingleNode(@"div/a[@class='card-click-target']");
+                        //var href = clickTarget.GetAttributeValue("href", string.Empty);
+                        //Console.WriteLine(href);
+                        //entry.AppId = href;
+
+                        //var currentNode = node.SelectSingleNode(@"div/a[@class='title']");
+                        //var href = currentNode.GetAttributeValue("href", string.Empty);
+                        //Console.WriteLine(href);
+                        //entry.AppId = href;
+                        //entry.AppName = currentNode.InnerText.Trim();
 
                         var detailsNode = node.SelectSingleNode(@"div/div[@class='details']");
 
+                        var hrefNode = detailsNode.SelectSingleNode("a[@class='title']");
+                        entry.AppId = hrefNode.GetAttributeValue("href", string.Empty);
+                        entry.AppName = hrefNode.InnerText.Trim();
+
+                        Console.WriteLine(entry.AppId);
+
                         // get description from details
                         var description = detailsNode.SelectSingleNode(@"div[@class='description']");
-                        Console.WriteLine(description.InnerText.Trim());
+                        //Console.WriteLine(description.InnerText.Trim());
                         entry.Desc = description.InnerText.Trim();
 
                         // get developer from description
                         var ahref = detailsNode.SelectSingleNode(@"div[@class='subtitle-container']/a");
-                        href = ahref.GetAttributeValue("href", string.Empty);
-                        Console.WriteLine(href);
+                        var href = ahref.GetAttributeValue("href", string.Empty);
                         entry.DevId = href;
                         entries.Add(entry);
+                        //Console.WriteLine(href);
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"{ex.Message} while parsing");
+                        Console.WriteLine($"{ex.Message} while parsing {q}");
                     }
                 }
             }
@@ -407,6 +423,9 @@ namespace GoogleSuggestionsParser
         {
             get
             {
+                if (string.IsNullOrEmpty(Installations))
+                    return string.Empty;
+
                 var tmp = Installations
                     .Replace(",", string.Empty)
                     .Replace(".", string.Empty)
@@ -424,10 +443,13 @@ namespace GoogleSuggestionsParser
         {
             get
             {
+                if (string.IsNullOrEmpty(Updated))
+                    return string.Empty;
+
                 var tmp = Updated.Split(' ');
                 if (tmp.Length < 3)
                     return $"\t\t";
-                return $"{tmp[0]}\t{tmp[1]}\t{tmp[2]}";
+                return $"{tmp[0]}\t{MonthNumberByName(tmp[1])}\t{tmp[2]}";
             }
         }
 
@@ -447,12 +469,25 @@ namespace GoogleSuggestionsParser
             }
         }
 
+        public string AppName { get; set; }
 
         public override string ToString()
         {
-            return $"{SearchQuery}\t{Desc}\t{UpdatexEx}\t{InstallationsEx}\t{CurrentVersion}\t{AppIdUrl}\t{DevIdUrl}";
+            return $"{AppName}\t{Desc}\t{UpdatexEx}\t{InstallationsEx}\t{CurrentVersion}\t{AppIdUrl}\t{DevIdUrl}\t{SearchQuery}";
             //return $"{SearchQuery}\t{AppId}\t{DevId}\t{Desc}\t{UpdatexEx}\t{Installations}\t{CurrentVersion}\t{AppIdUrl}\t{DevIdUrl}";
         }
+
+        public static int MonthNumberByName(string month)
+        {
+            var months = new string[] { "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря", };
+
+            for (var i = 0; i < months.Length; i++)
+                if (months[i] == month.ToLower())
+                    return i + 1;
+
+            return 0;
+        }
+
     }
 
     /// <summary>
