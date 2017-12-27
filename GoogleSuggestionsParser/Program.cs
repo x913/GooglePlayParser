@@ -31,16 +31,19 @@ namespace GoogleSuggestionsParser
             parser.Setup(arg => arg.Mode)
                 .As('m', "mode")
                 .Required()
-                .WithDescription("Work mode: s (parse suggestions) r (get search results by query) d (parse by developer) c (encode result to CSV)");
+                .WithDescription("Work mode: f (parse categories - topselling_free) s (parse suggestions) r (get search results by query) d (parse by developer) c (encode result to CSV)");
 
 
             var result = parser.Parse(args);
             if (result.HasErrors)
             {
                 Console.WriteLine(result.ErrorText);
-                Console.WriteLine("--mode for work mode: s (parse suggestions) r (get search results by query) d (parse by developer) c (encode result to CSV)");
+                Console.WriteLine("--mode for work mode: f (parse categories - topselling_free) s (parse suggestions) r (get search results by query) d (parse by developer) c (encode result to CSV)");
                 return;
             }
+
+            var queryFile = $"{parser.Object.Query}.json";
+            var csvFile = $"{parser.Object.Query}.csv";
 
             // parse suggestion
             if (parser.Object.Mode == "s")
@@ -61,8 +64,37 @@ namespace GoogleSuggestionsParser
                 return;
             }
 
-            var queryFile = $"{parser.Object.Query}.json";
-            var csvFile = $"{parser.Object.Query}.csv";
+            // parse all free categories
+            if(parser.Object.Mode == "f")
+            {
+                if (!System.IO.File.Exists("categories.txt"))
+                {
+                    Console.WriteLine("File with categories list (categories.txt) not found!");
+                    return;
+                }
+
+                var categoires = parser.Object.Query.Split(' ');
+                var allEntries = new List<GooglePlayEntry>();
+                foreach(var category in categoires.Select( x => x.ToUpper().Trim()))
+                {
+                    try
+                    {
+                        var entries = ParseTopsellingFreeCategory(category);
+                        foreach(var entry in entries)
+                        {
+                            ParseGooglePlayApplicationPage(entry);
+                        }
+                        allEntries.AddRange(entries);
+                        var tmpresult = JsonConvert.SerializeObject(allEntries, Formatting.Indented);
+                        File.WriteAllText("topsellfree_categories.json", tmpresult);
+                    } catch(Exception ex)
+                    {
+                        Console.WriteLine($"Error while parsing {category} - {ex.Message}");
+                    }
+                    ConvertJsonToCsv("topsellfree_categories.json", "topsellfree_categories.csv");
+                }
+
+            }
 
             // parse apps by search query
             if (parser.Object.Mode == "r")
@@ -188,6 +220,8 @@ namespace GoogleSuggestionsParser
                 wc.Headers = headers;
                 var response = wc.DownloadString($"https://play.google.com/{entry.AppId}");
 
+                Console.WriteLine($"Parsing - {entry.AppId}");
+
                 var doc = new HtmlDocument();
                 doc.LoadHtml(response);
                 var descrHtmlNode = doc.DocumentNode.SelectSingleNode(@"//div[@class='show-more-content text-body']");
@@ -200,48 +234,47 @@ namespace GoogleSuggestionsParser
                     return entry;
                 var rating = ratingHtmlNode.GetAttributeValue("content", "0.0");
 
-                var sectionMetaHtmlNodes = doc.DocumentNode.SelectNodes(@"//div[@class='details-section-contents']/div[@class='meta-info']");
-                if (sectionMetaHtmlNodes == null)
-                    return entry;
-                var currentpos = 0;
-                foreach(var node in sectionMetaHtmlNodes)
-                {
-                    var titleNode = node.SelectSingleNode(@"./div[@class='title']");
-                    if (titleNode == null)
-                        return entry;
-
-                    var title = titleNode.InnerText;
-
-                    var contentNode = titleNode.SelectSingleNode("following-sibling::div[1]");
-                    if (contentNode == null)
-                        return entry;
-
-                    var content = contentNode.InnerText;
-
-                    switch (currentpos)
+                foreach (var itemprop in new string[] { "datePublished", "numDownloads", "softwareVersion" }) {
+                    var node = doc.DocumentNode.SelectSingleNode($"//div[@itemprop='{itemprop}']");
+                    if (node == null)
+                        continue;
+                    switch(itemprop)
                     {
-                        // Обновлено
-                        case 0:
-                            entry.Updated = content.Trim();
+                        case "datePublished":
+                            entry.Updated = node.InnerText;
                             break;
-                        // Количество установок
-                        case 1:
-                            entry.Installations = content.Trim();
+                        case "numDownloads":
+                            entry.Installations = node.InnerText;
                             break;
-                        // Текущая версия
-                        case 2:
-                            entry.CurrentVersion = content.Trim();
-                            if(entry.CurrentVersion.StartsWith("Version"))
-                            {
-                                entry.CurrentVersion = "0";
-                            }
+                        case "softwareVersion":
+                            entry.CurrentVersion = node.InnerText;
                             break;
                     }
-
-                    currentpos++;
                 }
+
+               
             }
             return entry;
+        }
+
+        /// <summary>
+        /// Get content from https://play.google.com/store/apps/category/[CATEGORY]/collection/topselling_free
+        /// and parse all applications from it
+        /// </summary>
+        /// <param name="category"></param>
+        /// <returns></returns>
+        static IEnumerable<GooglePlayEntry> ParseTopsellingFreeCategory(string category)
+        {
+            using (var wc = new WebClient())
+            {
+                WebHeaderCollection headers = new WebHeaderCollection
+                {
+                    [HttpRequestHeader.UserAgent] = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/534.24 (KHTML, like Gecko) Ubuntu/10.04 Chromium/11.0.696.0 Chrome/11.0.696.0 Safari/534.24"
+                };
+                wc.Encoding = Encoding.UTF8;
+                wc.Headers = headers;
+                return ParseGooglePlaySearchResults(wc.DownloadString($"https://play.google.com/store/apps/category/{category}/collection/topselling_free"), category);
+            }
         }
 
         static IEnumerable<GooglePlayEntry> ParseSearchResultsByDeveloper(string developerId)
@@ -357,7 +390,6 @@ namespace GoogleSuggestionsParser
             }
         }
 
-
         static IEnumerable<string> PermuteLetters()
         {
             var chars = new char[] { 'a', 'b', 'c', 'd', 'e', 'g', 'h', 'i', 'j', 'k', 'm', 'n', 'o', 'p', 'q', 's', 't', 'u', 'v', 'w', 'y', 'z' };
@@ -386,114 +418,6 @@ namespace GoogleSuggestionsParser
                 }
             }
         }
-
-
-
-    }
-
-    class CommandLineArguments
-    {
-        public string Query { get; set; }
-        public string Mode { get; set; }
-    }
-
-    class GooglePlayEntry
-    {
-        public string SearchQuery { get; set; }
-        public string AppId { get; set; }
-        public string DevId { get; set; }
-        public string Desc { get; set; }
-        public string Updated { get; set; }
-        public string Installations { get; set; }
-        public string CurrentVersion { get; set; }
-
-
-        public string InstallationsEx
-        {
-            get
-            {
-                if (string.IsNullOrEmpty(Installations))
-                    return string.Empty;
-
-                var tmp = Installations
-                    .Replace(",", string.Empty)
-                    .Replace(".", string.Empty)
-                    .Replace(" ", string.Empty)
-                    .Split('–');
-
-                if (tmp.Length != 2)
-                    return $"\t";
-                return $"{tmp[0].Trim()}\t{tmp[1].Trim()}";
-
-            }
-        }
-
-        public string UpdatexEx
-        {
-            get
-            {
-                if (string.IsNullOrEmpty(Updated))
-                    return string.Empty;
-
-                var tmp = Updated.Split(' ');
-                if (tmp.Length < 3)
-                    return $"\t\t";
-                //return $"{tmp[0]}\t{MonthNumberByName(tmp[1])}\t{tmp[2]}";
-                int day = 0;
-                int month = MonthNumberByName(tmp[1]);
-                int year = 0;
-
-                if (!int.TryParse(tmp[0], out day) || !int.TryParse(tmp[2], out year))
-                    return string.Empty;
-
-                return string.Format("{0:D2}.{1:D2}.{2}", day, month, year);
-            }
-        }
-
-        public string AppIdUrl
-        {
-            get
-            {
-                return $"https://play.google.com/{AppId}";
-            }
-        }
-
-        public string DevIdUrl
-        {
-            get
-            {
-                return $"https://play.google.com/{DevId}";
-            }
-        }
-
-        public string AppName { get; set; }
-
-        public override string ToString()
-        {
-            return $"{AppName}\t{Desc}\t{UpdatexEx}\t{InstallationsEx}\t{CurrentVersion}\t{AppIdUrl}\t{DevIdUrl}\t{SearchQuery}";
-            //return $"{SearchQuery}\t{AppId}\t{DevId}\t{Desc}\t{UpdatexEx}\t{Installations}\t{CurrentVersion}\t{AppIdUrl}\t{DevIdUrl}";
-        }
-
-        public static int MonthNumberByName(string month)
-        {
-            var months = new string[] { "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря", };
-
-            for (var i = 0; i < months.Length; i++)
-                if (months[i] == month.ToLower())
-                    return i + 1;
-
-            return 0;
-        }
-
-    }
-
-    /// <summary>
-    /// [{"s":"how to draw batman","t":"q"},{"s":"how to draw barbie","t":"q"}]
-    /// </summary>
-    class Suggestion
-    {
-        public string s { get; set; }
-        public string t { get; set; }
     }
 
  
